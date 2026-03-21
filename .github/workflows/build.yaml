@@ -1,0 +1,146 @@
+# =============================================================
+# PIPELINE NAME
+# =============================================================
+name: Docker Build, Scan and Push
+
+# =============================================================
+# TRIGGERS
+# Runs on push to main (ignoring docs/workflow-only changes)
+# and can be triggered manually from the GitHub Actions UI.
+# =============================================================
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - ".github/workflows/**"
+      - "**/*.md"
+
+# =============================================================
+# GLOBAL ENV VARS
+# =============================================================
+env:
+  DOCKER_REPO: cloudbwoy       # ← CHANGE THIS
+  IMAGE_NAME: devops-bootcamp-linker-frontend   # ← change if desired
+
+# =============================================================
+# JOBS
+# =============================================================
+jobs:
+
+  # -----------------------------------------------------------
+  # JOB 1: Notify Slack that the pipeline has started
+  # -----------------------------------------------------------
+  slack-notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack Notification – Pipeline Started
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_TITLE: "🚀 Linker Frontend – Docker Build Triggered"
+          SLACK_MESSAGE: |
+            **Event:** ${{ github.event_name }}
+            **Actor:** ${{ github.actor }}
+            **Branch:** ${{ github.ref_name }}
+            **Commit:** ${{ github.event.head_commit.message }}
+
+  # -----------------------------------------------------------
+  # JOB 2: Build → Scan → Push
+  # -----------------------------------------------------------
+  build-scan-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # Checkout code
+      packages: write  # Push to GHCR if needed
+
+    steps:
+
+      # Step 1: Check out the repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Enable advanced Docker build features (caching, multi-platform)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Authenticate with Docker Hub using secrets (never hardcode credentials)
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_REPO }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      # Step 4: Generate a unique image tag from the short Git commit SHA
+      # Result: docker.io/<user>/<image>:sha-a1b2c3d
+      - name: Generate Docker image tag
+        id: tag
+        uses: docker/metadata-action@v5
+        with:
+          images: docker.io/${{ env.DOCKER_REPO }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=short
+
+      # Step 5: Build image locally (NOT pushed yet — must scan first)
+      # load: true makes it available to the local Docker daemon for Trivy
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+          tags: ${{ steps.tag.outputs.tags }}
+
+      # Step 6: Install Trivy (open-source container vulnerability scanner by Aqua Security)
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      # Step 7: Scan for HIGH/CRITICAL CVEs
+      # --exit-code 1     → fail the pipeline if vulnerabilities are found
+      # --ignore-unfixed  → skip vulns that have no available fix yet
+      # tee               → print to console AND write to file for the artifact
+      - name: Scan image for vulnerabilities
+        run: |
+          trivy image \
+            --format table \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH \
+            "${{ steps.tag.outputs.tags }}" \
+            | tee trivy-report.txt
+
+      # Step 8: Upload the scan report as a workflow artifact
+      # if: always() ensures the report is saved even when the scan fails
+      - name: Upload Trivy scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-linker-frontend
+          path: trivy-report.txt
+
+      # Step 9: Push to Docker Hub — only runs if the Trivy scan passed
+      - name: Push image to Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+          tags: ${{ steps.tag.outputs.tags }}
+
+      # Step 10: Final Slack notification with success/failure status
+      - name: Slack Notification – Pipeline Result
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE: |
+            Docker pipeline **${{ job.status }}**
+            Actor: ${{ github.actor }}
+            Repository: ${{ github.repository }}
+            Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

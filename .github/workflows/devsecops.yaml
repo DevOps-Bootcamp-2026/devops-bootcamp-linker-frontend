@@ -1,0 +1,175 @@
+name: DevSecOps Pipeline
+
+# =============================================================
+# TRIGGERS
+# Runs on Pull Requests targeting main — intentionally BEFORE
+# code merges so issues are caught before they hit production.
+# The build pipeline (build.yaml) runs AFTER the merge.
+# =============================================================
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/workflows/**'
+      - '**/*.md'
+
+# =============================================================
+# JOBS
+# =============================================================
+jobs:
+
+  # -----------------------------------------------------------
+  # JOB 1: Notify Slack when a PR is opened/updated
+  # -----------------------------------------------------------
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack Notification on PR
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_CHANNEL: github-notifications
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_TITLE: "🔐 Linker Frontend – DevSecOps Pipeline"
+          SLACK_MESSAGE: |
+            **Event**: ${{ github.actor }} opened a ${{ github.event_name }}!
+            **Repository**: ${{ github.event.pull_request.html_url }}
+            **Branch**: ${{ github.ref_name }}
+            **PR Title**: ${{ github.event.pull_request.title }}
+          MSG_MINIMAL: true
+          SLACKIFY_MARKDOWN: true
+
+  # -----------------------------------------------------------
+  # JOB 2: Lint — catch code style and quality issues early
+  # -----------------------------------------------------------
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          clean: true  # Fresh workspace to avoid stale file issues
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Install dependencies
+        run: npm install
+
+      # Only lint files that actually changed in this PR — saves time
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v42
+        with:
+          files: |
+            **/*.js
+            **/*.jsx
+            **/*.ts
+            **/*.tsx
+
+      - name: Run ESLint on changed files
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: npx eslint ${{ steps.changed-files.outputs.all_changed_files }} --max-warnings=0
+
+      - name: Skip lint (no JS/TS files changed)
+        if: steps.changed-files.outputs.any_changed != 'true'
+        run: echo "No JS/TS files changed — skipping lint."
+
+  # -----------------------------------------------------------
+  # JOB 3: SCA — check npm dependencies for known CVEs
+  # -----------------------------------------------------------
+  sca:
+    name: Software Composition Analysis
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Install dependencies
+        run: npm install
+
+      # npm audit checks installed packages against the npm advisory database.
+      # The jq filter fails the step only if moderate/high/critical vulns exist.
+      - name: Run npm audit (SCA)
+        run: |
+          npm audit --json | tee npm-audit-report.json | \
+          jq -e 'select(.type=="auditSummary") |
+            select(
+              .data.vulnerabilities.moderate == 0 and
+              .data.vulnerabilities.high == 0 and
+              .data.vulnerabilities.critical == 0
+            )' > /dev/null
+
+      - name: Upload SCA report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sca-report-linker-frontend
+          path: npm-audit-report.json
+
+  # -----------------------------------------------------------
+  # JOB 4: SAST — scan source code for security anti-patterns
+  # -----------------------------------------------------------
+  sast:
+    name: SAST – Semgrep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep  # Official Semgrep Docker image
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Semgrep reads rules from Semgrep Cloud (SEMGREP_APP_TOKEN).
+      # --error causes a non-zero exit code if findings exist, failing the pipeline.
+      - name: Run Semgrep
+        run: semgrep scan --error --json-output=semgrep-results.json
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-report-linker-frontend
+          path: semgrep-results.json
+
+      - name: Slack – Pipeline Failed
+        if: ${{ failure() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE_ON_FAILURE: "❌ Linker Frontend DevSecOps Pipeline FAILED!"
+
+      - name: Slack – Pipeline Passed
+        if: ${{ success() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE_ON_SUCCESS: "✅ Linker Frontend DevSecOps Pipeline passed!"
+
+      - name: Slack – Report Link
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE_ON_SUCCESS: "📋 Reports: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SLACK_MESSAGE_ON_FAILURE: "📋 Reports: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SLACK_MSG_AUTHOR: ${{ github.actor }}
+          MSG_MINIMAL: true
