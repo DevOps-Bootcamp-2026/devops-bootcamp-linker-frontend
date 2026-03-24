@@ -1,0 +1,152 @@
+name: Frontend CI Pipeline
+on:
+  workflow_dispatch:
+  pull_request:
+      branches:
+        - main
+      paths-ignore:
+        - '**/*.md'
+        - '.github/workflows/**'
+
+env:
+  IMAGE_NAME: bootcamp-frontend
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack Notification on Push/PR
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_CHANNEL: pr-notifications
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_MESSAGE: |
+            **Event**: https://github.com/${{ github.actor }} just made ${{ github.event_name }}!
+
+            **Repository**: ${{ github.event.pull_request.html_url }}
+
+            **GitHub Branch**: ${{ github.ref_name }}
+
+            **Commit Message**: ${{ github.event.pull_request.title }}
+          SLACK_TITLE: DevSecOps Advertiser Dashboard Pipeline
+          MSG_MINIMAL: true
+          SLACKIFY_MARKDOWN: true
+
+  # Run ESLint to check for code quality and potential issues        
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run ESLint
+        run: npm run lint
+  
+  # Run npm audit to check for vulnerabilities in dependencies
+  sca:
+    name: Software Composition Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --json | tee npm-audit-report.json | jq -e 'select(.metadata.vulnerabilities.critical == 0 and .metadata.vulnerabilities.high == 0 and .metadata.vulnerabilities.moderate == 0)' > /dev/null
+
+      - name: Upload SCA Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sca-reports
+          path: |
+            reports
+            npm-audit-report.json
+
+  # Run Semgrep for Static Application Security Testing (SAST)
+  sast:
+    name: semgrep/ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run semgrep
+        run: semgrep scan --error --json-output=semgrep-results.json
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload SARIF Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-report
+          path: semgrep-results.json
+      
+      - name: Summarize npm audit errors
+        if: failure()
+        id: npm_summary
+        run: |
+          CRITICAL=$(jq '.metadata.vulnerabilities.critical' npm-audit-report.json)
+          HIGH=$(jq '.metadata.vulnerabilities.high' npm-audit-report.json)
+          MODERATE=$(jq '.metadata.vulnerabilities.moderate' npm-audit-report.json)
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "moderate=$MODERATE" >> $GITHUB_OUTPUT
+
+      - name: Summarize Semgrep errors
+        if: failure()
+        id: semgrep_summary
+        run: |
+          TOTAL_ISSUES=$(jq '.results | length' semgrep-results.json)
+          echo "semgrep_issues=$TOTAL_ISSUES" >> $GITHUB_OUTPUT
+
+      - name: Slack Notification
+        if: ${{ failure() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE_ON_FAILURE: |
+            DevSecOps Pipeline failed!
+            🔹 npm audit: Critical=${{ steps.npm_summary.outputs.critical }}, High=${{ steps.npm_summary.outputs.high }}, Moderate=${{ steps.npm_summary.outputs.moderate }}
+            🔹 Semgrep (SAST) issues: ${{ steps.semgrep_summary.outputs.semgrep_issues }}
+            Get the full reports here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Slack Notification
+        if: ${{ success() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE_ON_SUCCESS: "DevSecOps Pipeline was successful!"
+
+      - name: Slack Notification with Artifact Link
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE_ON_SUCCESS: "Get DevSecOps Reports here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SLACK_MESSAGE_ON_FAILURE: "Get DevSecOps Reports here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SLACK_MSG_AUTHOR: ${{ github.actor }}
+          MSG_MINIMAL: true
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
