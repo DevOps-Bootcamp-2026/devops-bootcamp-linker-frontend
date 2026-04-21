@@ -16,7 +16,7 @@ on:
 env: 
     DOCKER_REPO: thelogicguy
     IMAGE_NAME: devopsbootcamp-frontend
-    NEXT_PUBLIC_API_URL: "http://localhost:3001"
+    NEXT_PUBLIC_API_URL: "http://thelogicguy-leap.xyz/api"
 
 
 jobs:
