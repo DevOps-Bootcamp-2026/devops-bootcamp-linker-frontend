@@ -101,9 +101,7 @@ jobs:
               with:
                 context: .
                 load: true
-                tags: ${{ steps.tag.outputs.tags }}
-                build-args: |
-                    NEXT_PUBLIC_API_URL=${{ env.NEXT_PUBLIC_API_URL }}
+                tags: ${{ steps.tag.outputs.tags }}               
             
             # -------------------------------------------------
             # STEP 6: Install Trivy Security Scanner
@@ -145,6 +143,8 @@ jobs:
                 context: .
                 push: true
                 tags: ${{ steps.tag.outputs.tags }}
+                build-args: |
+                    NEXT_PUBLIC_API_URL=${{ env.NEXT_PUBLIC_API_URL }}
 
             # -------------------------------------------------
             # STEP 10: Final Slack Notification
