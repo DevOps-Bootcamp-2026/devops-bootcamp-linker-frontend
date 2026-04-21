@@ -9,7 +9,7 @@ import React, {
 } from "react";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
 type User = {
   id: string;
