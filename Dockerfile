@@ -16,7 +16,7 @@ RUN npm ci
 # Copy the rest of the application source code
 COPY . .
 ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NODE_ENV=production
 
 # Build the application
