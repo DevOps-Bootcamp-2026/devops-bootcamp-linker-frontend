@@ -27,7 +27,7 @@ on:
 env:
     DOCKER_REPO: achebeh
     IMAGE_NAME: devlink-frontend
-    NEXT_PUBLIC_API_URL: "http://102.223.38.222:3001"
+    NEXT_PUBLIC_API_URL: "http://102.223.38.222:3001/api"
 
 # -------------------------------------------------
 # JOB 1: Notify Slack that pipeline started
