@@ -1,8 +1,6 @@
-ARG NODE=node:20-alpine 
-
 # Stage 1: Build the application
 
-FROM $NODE AS builder
+FROM node:20-alpine AS builder
 
 # Update and install necessary packages
 RUN apk update \
@@ -28,7 +26,7 @@ ENV NODE_ENV=production
 RUN npm run build
 
 # Stage 2: Create the production image
-FROM $NODE AS production
+FROM node:20-alpine AS production
 
 LABEL maintainer="Macdonald" \
       description="Next.js application for MacDonald" \
