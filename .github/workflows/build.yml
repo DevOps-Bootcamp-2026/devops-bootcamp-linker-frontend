@@ -16,7 +16,7 @@ on:
 env: 
     DOCKER_REPO: thelogicguy
     IMAGE_NAME: devopsbootcamp-frontend
-    NEXT_PUBLIC_API_URL: "http://thelogicguy-leap.xyz/api"
+    NEXT_PUBLIC_API_URL: "http://api.thelogicguy-leap.xyz"
 
 
 jobs:
@@ -120,6 +120,8 @@ jobs:
                 context: .
                 push: true
                 tags: ${{ steps.tag.outputs.tags }}
+                build-args: |
+                    NEXT_PUBLIC_API_URL=${{ env.NEXT_PUBLIC_API_URL }}
 
             # Send a Slack notification with the final status of the job, 
             # including details about the actor, repository, and a link to the logs for easy access and monitoring. 
