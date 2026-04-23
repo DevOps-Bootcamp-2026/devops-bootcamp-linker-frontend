@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { ClipLoader } from "react-spinners";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-const MAX_FILE_SIZE = 1024 * 1024 * 4; // 4MB
+const MAX_FILE_SIZE = 1024 * 1024 * 4; 
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 
 interface FormData {
