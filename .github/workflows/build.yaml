@@ -27,7 +27,7 @@ on:
 env:
     DOCKER_REPO: achebeh
     IMAGE_NAME: devlink-frontend
-    NEXT_PUBLIC_API_URL: "http://api.devopsbootcamp.online/api"
+    NEXT_PUBLIC_API_URL: "https://api.devopsbootcamp.online/api"
 
 # -------------------------------------------------
 # JOB 1: Notify Slack that pipeline started
